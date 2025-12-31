@@ -164,6 +164,9 @@ async function loadOnce(){
       }
     });
 
+    // DEBUG útil (lo puedes borrar después)
+    // console.log("fetch", url, r.status);
+
     if(!r.ok){
       const txt = await r.text().catch(()=> "");
       setStatusError(`HTTP ${r.status}${txt ? " · " + txt.slice(0,120) : ""}`);
@@ -181,7 +184,6 @@ async function loadOnce(){
       state.className = "";
       ts.textContent = "--";
       alarmBox.classList.remove("show");
-
       if(chart){
         chart.data.labels = [];
         chart.data.datasets.forEach(ds => ds.data = []);
@@ -237,9 +239,10 @@ async function loadOnce(){
     }
 
   } catch(e){
-    setStatusError(`FETCH ERROR · ${String(e.message || e)}`);
+    setStatusError(`FETCH ERROR · ${String(e?.message || e)}`);
   }
 }
+
 
 function exportCSV(){
   if(!lastPoints.length){ alert("Sin datos"); return; }
