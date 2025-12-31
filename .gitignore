@@ -1,0 +1,13 @@
+# Secrets
+.env.supabase
+.env
+.env.*
+
+# Supabase local artifacts
+supabase/.temp/
+supabase/.branches/
+supabase/.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
