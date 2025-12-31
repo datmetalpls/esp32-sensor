@@ -64,9 +64,9 @@
 <script>
 // ===== CONFIG =====
 const FN = "https://uqfjgsjaqnoiytukprby.functions.supabase.co/read-temp";
-const DASH_KEY="julcerugu";
-const DEVICE_ID="esp32-lab-01";
-const THRESHOLD=28.0;
+const DASH_KEY = "julcerugu";        // Debe coincidir con el secret DASHBOARD_KEY en Supabase
+const DEVICE_ID = "esp32-lab-01";
+const THRESHOLD = 28.0;
 // ==================
 
 let chart, prevAlarm=null, audioCtx=null, lastPoints=[];
@@ -82,9 +82,8 @@ const alarmShadePlugin = {
     const alarms = pluginOptions.alarms || [];
     if (!alarms.length) return;
 
-    // Dibujar bandas verticales entre puntos consecutivos en alarma
     ctx.save();
-    ctx.fillStyle = "rgba(176, 0, 32, 0.10)"; // sombreado tenue rojo
+    ctx.fillStyle = "rgba(176, 0, 32, 0.10)";
 
     for (let i = 0; i < alarms.length - 1; i++){
       if (alarms[i] !== true) continue;
@@ -95,14 +94,11 @@ const alarmShadePlugin = {
       const start = Math.max(left, Math.min(x1, x2));
       const end   = Math.min(right, Math.max(x1, x2));
 
-      if (end > start){
-        ctx.fillRect(start, top, end - start, bottom - top);
-      }
+      if (end > start) ctx.fillRect(start, top, end - start, bottom - top);
     }
     ctx.restore();
   }
 };
-
 Chart.register(alarmShadePlugin);
 
 function limitForRange(m){
@@ -135,72 +131,100 @@ function beep(){
   }catch{}
 }
 
+function setStatusError(msg){
+  // UI consistente ante fallos (401/500/etc.)
+  temp.textContent = `--.- °C`;
+  state.textContent = msg;
+  state.className = "badge badge-alarm";
+  badge.textContent = "ERROR";
+  badge.className = "badge badge-alarm";
+  ts.textContent = new Date().toLocaleString();
+}
+
 async function loadOnce(){
-  const min=Number(range.value);
-  const smoothW=Number(smoothSel.value);
+  const min = Number(range.value);
+  const smoothW = Number(smoothSel.value);
 
-  const url=`${FN}?device_id=${encodeURIComponent(DEVICE_ID)}&limit=${limitForRange(min)}`;
-  const r=await fetch(url,{headers:{"x-dashboard-key":DASH_KEY}});
-  if(!r.ok) throw new Error(r.status);
-  const j=await r.json();
+  const url = `${FN}?device_id=${encodeURIComponent(DEVICE_ID)}&limit=${limitForRange(min)}`;
 
-  lastPoints=j.points||[];
+  try{
+    const r = await fetch(url, { headers: { "x-dashboard-key": DASH_KEY } });
 
-  if(j.latest){
-    const a=!!j.latest.alarm;
-    temp.textContent=`${Number(j.latest.temp_c).toFixed(1)} °C`;
-    state.textContent=a?"ALARMA":"NORMAL";
-    state.className=a?"badge badge-alarm":"badge badge-ok";
-    badge.textContent=state.textContent;
-    badge.className=state.className;
-    ts.textContent=new Date(j.latest.created_at).toLocaleString();
+    if(!r.ok){
+      const txt = await r.text().catch(()=> "");
+      setStatusError(`HTTP ${r.status}${txt ? " · " + txt.slice(0,80) : ""}`);
+      return;
+    }
+
+    const j = await r.json();
+    lastPoints = j.points || [];
+
+    if(!j.latest){
+      // sin datos (por ejemplo, tabla vacía)
+      badge.textContent = "SIN DATOS";
+      badge.className = "badge";
+      temp.textContent = `--.- °C`;
+      state.textContent = "SIN DATOS";
+      state.className = "";
+      ts.textContent = "--";
+      alarmBox.classList.remove("show");
+      // limpia gráfico si existe
+      if(chart){
+        chart.data.labels = [];
+        chart.data.datasets.forEach(ds => ds.data = []);
+        chart.update();
+      }
+      return;
+    }
+
+    const a = !!j.latest.alarm;
+    temp.textContent = `${Number(j.latest.temp_c).toFixed(1)} °C`;
+    state.textContent = a ? "ALARMA" : "NORMAL";
+    state.className = a ? "badge badge-alarm" : "badge badge-ok";
+    badge.textContent = state.textContent;
+    badge.className = state.className;
+    ts.textContent = new Date(j.latest.created_at).toLocaleString();
 
     if(prevAlarm===false && a===true){ alarmBox.classList.add("show"); beep(); }
     if(!a) alarmBox.classList.remove("show");
-    prevAlarm=a;
-  }
+    prevAlarm = a;
 
-  const labels=lastPoints.map(p=>p.created_at);
-  const vals=lastPoints.map(p=>Number(p.temp_c));
-  const smoothVals=movingAverage(vals,smoothW);
+    const labels = lastPoints.map(p=>p.created_at);
+    const vals = lastPoints.map(p=>Number(p.temp_c));
+    const smoothVals = movingAverage(vals, smoothW);
 
-  // puntos rojos solo donde alarm=true
-  const alarmPoints=lastPoints.map(p=>p.alarm ? Number(p.temp_c) : null);
+    const alarmPoints = lastPoints.map(p=>p.alarm ? Number(p.temp_c) : null);
+    const alarmFlags = lastPoints.map(p=>!!p.alarm);
+    const threshold = labels.map(()=>THRESHOLD);
 
-  // bandera alarmas para sombreado (booleans)
-  const alarmFlags=lastPoints.map(p=>!!p.alarm);
-
-  const threshold=labels.map(()=>THRESHOLD);
-
-  if(!chart){
-    chart=new Chart(chartEl,{
-      type:"line",
-      data:{
-        labels,
-        datasets:[
-          {label:"Temp °C", data:smoothVals},
-          {label:"Alarmas", data:alarmPoints, showLine:false, pointRadius:6, pointBackgroundColor:"#b00020"},
-          {label:"Umbral", data:threshold, borderDash:[6,6], pointRadius:0}
-        ]
-      },
-      options:{
-        animation:false,
-        scales:{x:{display:false}},
-        plugins:{
-          alarmShade:{ alarms: alarmFlags }
+    if(!chart){
+      chart = new Chart(chartEl,{
+        type:"line",
+        data:{
+          labels,
+          datasets:[
+            {label:"Temp °C", data:smoothVals},
+            {label:"Alarmas", data:alarmPoints, showLine:false, pointRadius:6, pointBackgroundColor:"#b00020"},
+            {label:"Umbral", data:threshold, borderDash:[6,6], pointRadius:0}
+          ]
+        },
+        options:{
+          animation:false,
+          scales:{x:{display:false}},
+          plugins:{ alarmShade:{ alarms: alarmFlags } }
         }
-      }
-    });
-  } else {
-    chart.data.labels=labels;
-    chart.data.datasets[0].data=smoothVals;
-    chart.data.datasets[1].data=alarmPoints;
-    chart.data.datasets[2].data=threshold;
+      });
+    } else {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = smoothVals;
+      chart.data.datasets[1].data = alarmPoints;
+      chart.data.datasets[2].data = threshold;
+      chart.options.plugins.alarmShade.alarms = alarmFlags;
+      chart.update();
+    }
 
-    // actualizar sombreado
-    chart.options.plugins.alarmShade.alarms = alarmFlags;
-
-    chart.update();
+  } catch(e){
+    setStatusError(`FETCH ERROR · ${String(e.message || e)}`);
   }
 }
 
@@ -228,8 +252,8 @@ const badge=document.getElementById("badge");
 const alarmBox=document.getElementById("alarmBox");
 const chartEl=document.getElementById("chart");
 
-range.onchange=smoothSel.onchange=loadOnce;
-setInterval(loadOnce,3000);
+range.onchange = smoothSel.onchange = loadOnce;
+setInterval(loadOnce, 3000);
 loadOnce();
 </script>
 
