@@ -1,49 +1,66 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-dashboard-key",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
+serve(async (req) => {
+  // Preflight CORS
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+  try {
+    // Auth por key
+    const key = req.headers.get("x-dashboard-key") ?? "";
+    const expected = Deno.env.get("DASHBOARD_KEY") ?? "";
+    if (!expected || key !== expected) {
+      return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    }
 
-Deno.serve(async (req) => {
-  if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+    const url = new URL(req.url);
+    const device_id = url.searchParams.get("device_id") ?? "";
+    const limit = Math.min(800, Math.max(10, Number(url.searchParams.get("limit") ?? "120")));
 
-  // auth simple para dashboard
-  const key = req.headers.get("x-dashboard-key") ?? "";
-  const expected = Deno.env.get("DASHBOARD_KEY") ?? "";
-  if (!expected || key !== expected) return new Response("Unauthorized", { status: 401 });
+    if (!device_id) {
+      return new Response(JSON.stringify({ error: "device_id requerido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  const url = new URL(req.url);
-  const device_id = url.searchParams.get("device_id") ?? "";
-  const limitStr = url.searchParams.get("limit") ?? "120";
-  const limit = Math.min(500, Math.max(10, Number(limitStr) || 120));
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const sb = createClient(supabaseUrl, serviceKey);
 
-  if (!device_id) return new Response("Missing device_id", { status: 400 });
+    const { data: points, error } = await sb
+      .from("temperature_log")
+      .select("device_id,temp_c,alarm,created_at")
+      .eq("device_id", device_id)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-  const sbUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const supabase = createClient(sbUrl, serviceKey);
+    if (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-  // últimos N puntos
-  const { data, error } = await supabase
-    .from("temperature_log")
-    .select("temp_c, alarm, created_at")
-    .eq("device_id", device_id)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    const latest = points?.[0] ?? null;
 
-  if (error) return new Response("DB error", { status: 500 });
+    return new Response(
+      JSON.stringify({ device_id, latest, points: (points ?? []).reverse() }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
 
-  const latest = data?.[0] ?? null;
-
-  return new Response(
-    JSON.stringify({
-      device_id,
-      latest,
-      points: (data ?? []).reverse(), // en orden cronológico para graficar
-    }),
-    { headers: { "content-type": "application/json" } }
-  );
+  } catch (e) {
+    return new Response(JSON.stringify({ error: String(e) }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 });
