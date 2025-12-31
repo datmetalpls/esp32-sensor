@@ -64,14 +64,19 @@
 <script>
 // ===== CONFIG =====
 const FN = "https://uqfjgsjaqnoiytukprby.functions.supabase.co/read-temp";
-const DASH_KEY = "julcerugu";        // Debe coincidir con el secret DASHBOARD_KEY en Supabase
 const DEVICE_ID = "esp32-lab-01";
 const THRESHOLD = 28.0;
+
+// Tu “key” adicional (ojo: es pública en Pages)
+const DASH_KEY = "julcerugu";
+
+// Supabase anon key (pública por diseño)
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxZmpnc2phcW5vaXl0dWtwcmJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMjk2MzIsImV4cCI6MjA4MjcwNTYzMn0.tYAHSLPCKzsqaCP6LvpCuUIItsO5mb3US7wRy54PwQU";
 // ==================
 
 let chart, prevAlarm=null, audioCtx=null, lastPoints=[];
 
-// Plugin para sombrear periodos donde alarm=true
+// Plugin: sombrear periodos donde alarm=true (bandas por tramo)
 const alarmShadePlugin = {
   id: "alarmShade",
   beforeDatasetsDraw(chart, args, pluginOptions){
@@ -132,7 +137,6 @@ function beep(){
 }
 
 function setStatusError(msg){
-  // UI consistente ante fallos (401/500/etc.)
   temp.textContent = `--.- °C`;
   state.textContent = msg;
   state.className = "badge badge-alarm";
@@ -144,15 +148,25 @@ function setStatusError(msg){
 async function loadOnce(){
   const min = Number(range.value);
   const smoothW = Number(smoothSel.value);
-
   const url = `${FN}?device_id=${encodeURIComponent(DEVICE_ID)}&limit=${limitForRange(min)}`;
 
+  if (!SUPABASE_ANON_KEY) {
+    setStatusError("Falta SUPABASE_ANON_KEY");
+    return;
+  }
+
   try{
-    const r = await fetch(url, { headers: { "x-dashboard-key": DASH_KEY } });
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "apikey": SUPABASE_ANON_KEY,
+        "x-dashboard-key": DASH_KEY
+      }
+    });
 
     if(!r.ok){
       const txt = await r.text().catch(()=> "");
-      setStatusError(`HTTP ${r.status}${txt ? " · " + txt.slice(0,80) : ""}`);
+      setStatusError(`HTTP ${r.status}${txt ? " · " + txt.slice(0,120) : ""}`);
       return;
     }
 
@@ -160,7 +174,6 @@ async function loadOnce(){
     lastPoints = j.points || [];
 
     if(!j.latest){
-      // sin datos (por ejemplo, tabla vacía)
       badge.textContent = "SIN DATOS";
       badge.className = "badge";
       temp.textContent = `--.- °C`;
@@ -168,7 +181,7 @@ async function loadOnce(){
       state.className = "";
       ts.textContent = "--";
       alarmBox.classList.remove("show");
-      // limpia gráfico si existe
+
       if(chart){
         chart.data.labels = [];
         chart.data.datasets.forEach(ds => ds.data = []);
