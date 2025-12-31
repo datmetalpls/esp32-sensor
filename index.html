@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESP32 Temp Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:Arial, sans-serif; margin:18px; max-width:900px}
+    .card{border:1px solid #ddd; border-radius:12px; padding:14px; margin-bottom:14px}
+    .big{font-size:40px; font-weight:700}
+    .alarm{color:#b00020; font-weight:700}
+    .ok{color:#0b6; font-weight:700}
+    .muted{color:#666}
+    input{padding:8px; border-radius:8px; border:1px solid #ccc; width:260px}
+    button{padding:9px 12px; border-radius:10px; border:1px solid #333; background:#fff; cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0 0 10px">Monitor Temperatura</h2>
+    <div class="muted">Dispositivo</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:6px">
+      <input id="device" value="esp32-lab-01" />
+      <button onclick="loadOnce()">Actualizar</button>
+    </div>
+    <div style="margin-top:12px">
+      <div class="muted">Temperatura actual</div>
+      <div id="temp" class="big">--.- °C</div>
+      <div>Estado: <span id="state">--</span></div>
+      <div class="muted">Última actualización: <span id="ts">--</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px">Histórico reciente</h3>
+    <canvas id="chart" height="120"></canvas>
+  </div>
+
+<script>
+  const FN = "https://uqfjgsjaqnoiytukprby.functions.supabase.co/read-temp";
+  const DASH_KEY = "una_clave_larga_dashboard"; // <-- PON TU DASHBOARD_KEY REAL
+  let chart;
+
+  function fmtTs(iso){
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
+  async function fetchData(device_id){
+    const url = `${FN}?device_id=${encodeURIComponent(device_id)}&limit=180`;
+    const r = await fetch(url, { headers: { "x-dashboard-key": DASH_KEY } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  function upsertChart(labels, values){
+    const ctx = document.getElementById("chart");
+    if (!chart){
+      chart = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets: [{ label: "Temp °C", data: values }] },
+        options: {
+          responsive: true,
+          animation: false,
+          scales: { x: { display: false } }
+        }
+      });
+    } else {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = values;
+      chart.update();
+    }
+  }
+
+  async function loadOnce(){
+    const device_id = document.getElementById("device").value.trim();
+    if (!device_id) return;
+
+    try{
+      const j = await fetchData(device_id);
+      const latest = j.latest;
+
+      if (latest){
+        document.getElementById("temp").textContent = `${Number(latest.temp_c).toFixed(1)} °C`;
+        const st = document.getElementById("state");
+        const alarm = !!latest.alarm;
+        st.textContent = alarm ? "ALARMA (>28)" : "NORMAL";
+        st.className = alarm ? "alarm" : "ok";
+        document.getElementById("ts").textContent = fmtTs(latest.created_at);
+      } else {
+        document.getElementById("temp").textContent = `--.- °C`;
+        document.getElementById("state").textContent = `SIN DATOS`;
+        document.getElementById("ts").textContent = `--`;
+      }
+
+      const pts = j.points || [];
+      const labels = pts.map(p => p.created_at);
+      const values = pts.map(p => p.temp_c);
+      upsertChart(labels, values);
+
+    } catch(e){
+      document.getElementById("state").textContent = `ERROR (${e.message})`;
+      document.getElementById("state").className = "alarm";
+    }
+  }
+
+  setInterval(loadOnce, 3000);
+  loadOnce();
+</script>
+</body>
+</html>
